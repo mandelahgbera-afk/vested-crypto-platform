@@ -2,9 +2,15 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
 import type { Page } from '@/App';
-import type { User, Crypto, Trader, Transaction, AdminSetting } from '@/types';
-import { mockApi, getDashboardStats } from '@/lib/mockData';
-import { 
+import type { User, Crypto, Trader, Transaction, AdminSetting, DashboardStats } from '@/types';
+import {
+  getAllUsers, getAllCryptos, getAllTraders, getAllTransactions,
+  getAdminSettings, getDashboardStats, updateUserStatus, updateUserBalance,
+  createCrypto, updateCrypto,
+  createTrader, updateTrader,
+  updateTransactionStatus, updateAdminSetting,
+} from '@/lib/supabase';
+import {
   LayoutDashboard, Users, Coins, UserCheck, History, Settings,
   LogOut, Activity
 } from 'lucide-react';
@@ -34,20 +40,21 @@ export default function AdminDashboard({ onNavigate }: AdminDashboardProps) {
   const [activeTab, setActiveTab] = useState<AdminTab>('overview');
   const { adminLogout } = useAuth();
   const { showToast } = useToast();
-  
-  const [isLoading, setIsLoading] = useState(true);
+
+  const [_isLoading, setIsLoading] = useState(true);
   const [users, setUsers] = useState<User[]>([]);
   const [cryptos, setCryptos] = useState<Crypto[]>([]);
   const [traders, setTraders] = useState<Trader[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [settings, setSettings] = useState<AdminSetting[]>([]);
-  const [stats, setStats] = useState({
+  const [stats, setStats] = useState<DashboardStats>({
     totalUsers: 0,
+    activeUsers: 0,
     totalBalance: 0,
-    totalTransactions: 0,
-    pendingRequests: 0,
+    pendingDeposits: 0,
+    pendingWithdrawals: 0,
+    totalVolume: 0,
     activeTraders: 0,
-    listedCryptos: 0,
   });
 
   useEffect(() => {
@@ -57,12 +64,13 @@ export default function AdminDashboard({ onNavigate }: AdminDashboardProps) {
   const loadData = async () => {
     setIsLoading(true);
     try {
-      const [usersData, cryptosData, tradersData, transactionsData, settingsData] = await Promise.all([
-        mockApi.getUsers(),
-        mockApi.getCryptos(),
-        mockApi.getTraders(),
-        mockApi.getTransactions(),
-        mockApi.getSettings(),
+      const [usersData, cryptosData, tradersData, transactionsData, settingsData, statsData] = await Promise.all([
+        getAllUsers(),
+        getAllCryptos(),
+        getAllTraders(),
+        getAllTransactions(),
+        getAdminSettings(),
+        getDashboardStats(),
       ]);
 
       setUsers(usersData);
@@ -70,8 +78,9 @@ export default function AdminDashboard({ onNavigate }: AdminDashboardProps) {
       setTraders(tradersData);
       setTransactions(transactionsData);
       setSettings(settingsData);
-      setStats(getDashboardStats());
+      if (statsData) setStats(statsData);
     } catch (error) {
+      console.error('Failed to load admin data:', error);
       showToast('Failed to load admin data', 'error');
     } finally {
       setIsLoading(false);
@@ -80,7 +89,17 @@ export default function AdminDashboard({ onNavigate }: AdminDashboardProps) {
 
   const handleUpdateUser = async (userId: string, updates: Partial<User>) => {
     try {
-      await mockApi.updateUser(userId, updates);
+      if (updates.status) {
+        await updateUserStatus(userId, updates.status);
+      }
+      if (updates.balance !== undefined || updates.profit_loss !== undefined) {
+        const user = users.find((u) => u.id === userId);
+        await updateUserBalance(
+          userId,
+          updates.balance ?? user?.balance ?? 0,
+          updates.profit_loss ?? user?.profit_loss ?? 0
+        );
+      }
       showToast('User updated successfully', 'success');
       loadData();
     } catch (error) {
@@ -90,7 +109,7 @@ export default function AdminDashboard({ onNavigate }: AdminDashboardProps) {
 
   const handleUpdateCrypto = async (cryptoId: string, updates: Partial<Crypto>) => {
     try {
-      await mockApi.updateCrypto(cryptoId, updates);
+      await updateCrypto(cryptoId, updates);
       showToast('Cryptocurrency updated successfully', 'success');
       loadData();
     } catch (error) {
@@ -100,7 +119,7 @@ export default function AdminDashboard({ onNavigate }: AdminDashboardProps) {
 
   const handleAddCrypto = async (crypto: Omit<Crypto, 'id' | 'created_at' | 'updated_at'>) => {
     try {
-      await mockApi.addCrypto(crypto);
+      await createCrypto(crypto);
       showToast('Cryptocurrency added successfully', 'success');
       loadData();
     } catch (error) {
@@ -110,7 +129,7 @@ export default function AdminDashboard({ onNavigate }: AdminDashboardProps) {
 
   const handleUpdateTrader = async (traderId: string, updates: Partial<Trader>) => {
     try {
-      await mockApi.updateTrader(traderId, updates);
+      await updateTrader(traderId, updates);
       showToast('Trader updated successfully', 'success');
       loadData();
     } catch (error) {
@@ -120,7 +139,7 @@ export default function AdminDashboard({ onNavigate }: AdminDashboardProps) {
 
   const handleAddTrader = async (trader: Omit<Trader, 'id' | 'created_at' | 'updated_at'>) => {
     try {
-      await mockApi.addTrader(trader);
+      await createTrader(trader);
       showToast('Trader added successfully', 'success');
       loadData();
     } catch (error) {
@@ -128,19 +147,29 @@ export default function AdminDashboard({ onNavigate }: AdminDashboardProps) {
     }
   };
 
-  const handleUpdateTransaction = async (transactionId: string, updates: Partial<Transaction>) => {
+  const handleApproveTransaction = async (transactionId: string) => {
     try {
-      await mockApi.updateTransaction(transactionId, updates);
-      showToast('Transaction updated successfully', 'success');
+      await updateTransactionStatus(transactionId, 'approved');
+      showToast('Transaction approved', 'success');
       loadData();
     } catch (error) {
-      showToast('Failed to update transaction', 'error');
+      showToast('Failed to approve transaction', 'error');
+    }
+  };
+
+  const handleRejectTransaction = async (transactionId: string, reason: string) => {
+    try {
+      await updateTransactionStatus(transactionId, 'rejected', reason);
+      showToast('Transaction rejected', 'success');
+      loadData();
+    } catch (error) {
+      showToast('Failed to reject transaction', 'error');
     }
   };
 
   const handleUpdateSetting = async (key: string, value: string) => {
     try {
-      await mockApi.updateSetting(key, value);
+      await updateAdminSetting(key, value);
       showToast('Setting updated successfully', 'success');
       loadData();
     } catch (error) {
@@ -151,59 +180,95 @@ export default function AdminDashboard({ onNavigate }: AdminDashboardProps) {
   const handleLogout = () => {
     adminLogout();
     onNavigate('landing');
-    showToast('Logged out successfully', 'info');
+  };
+
+  // Map DashboardStats to AdminOverview-compatible format
+  const overviewStats = {
+    totalUsers: stats.totalUsers,
+    totalBalance: stats.totalBalance,
+    totalTransactions: transactions.length,
+    pendingRequests: stats.pendingDeposits + stats.pendingWithdrawals,
+    activeTraders: stats.activeTraders,
+    listedCryptos: cryptos.filter((c) => c.is_active).length,
   };
 
   const renderContent = () => {
-    if (isLoading) {
-      return (
-        <div className="flex items-center justify-center h-96">
-          <div className="w-8 h-8 border-2 border-[#6941C6] border-t-transparent rounded-full animate-spin" />
-        </div>
-      );
-    }
-
     switch (activeTab) {
       case 'overview':
-        return <AdminOverview stats={stats} recentTransactions={transactions.slice(0, 5)} />;
+        return (
+          <AdminOverview
+            stats={overviewStats}
+            recentTransactions={transactions.slice(0, 10)}
+          />
+        );
       case 'users':
-        return <AdminUsers users={users} onUpdate={handleUpdateUser} />;
+        return (
+          <AdminUsers
+            users={users}
+            onUpdate={handleUpdateUser}
+          />
+        );
       case 'cryptos':
-        return <AdminCryptos cryptos={cryptos} onUpdate={handleUpdateCrypto} onAdd={handleAddCrypto} />;
+        return (
+          <AdminCryptos
+            cryptos={cryptos}
+            onUpdate={handleUpdateCrypto}
+            onAdd={handleAddCrypto}
+          />
+        );
       case 'traders':
-        return <AdminTraders traders={traders} onUpdate={handleUpdateTrader} onAdd={handleAddTrader} />;
+        return (
+          <AdminTraders
+            traders={traders}
+            onUpdate={handleUpdateTrader}
+            onAdd={handleAddTrader}
+          />
+        );
       case 'transactions':
-        return <AdminTransactions transactions={transactions} onUpdate={handleUpdateTransaction} />;
+        return (
+          <AdminTransactions
+            transactions={transactions}
+            onUpdate={(txId, updates) => {
+              if (updates.status === 'approved') handleApproveTransaction(txId);
+              else if (updates.status === 'rejected') handleRejectTransaction(txId, updates.notes || '');
+            }}
+          />
+        );
       case 'settings':
-        return <AdminSettings settings={settings} onUpdate={handleUpdateSetting} />;
+        return (
+          <AdminSettings
+            settings={settings}
+            onUpdate={handleUpdateSetting}
+          />
+        );
       default:
-        return <AdminOverview stats={stats} recentTransactions={transactions.slice(0, 5)} />;
+        return null;
     }
   };
 
   return (
     <div className="min-h-screen bg-[#0C111D] flex">
       {/* Sidebar */}
-      <aside className="w-64 bg-[#070B13] border-r border-white/5 flex flex-col fixed top-0 left-0 bottom-0 z-50">
+      <aside className="fixed left-0 top-0 h-full w-64 bg-[#070B13] border-r border-white/5 flex flex-col z-50">
         {/* Logo */}
-        <div className="p-6">
+        <div className="p-6 border-b border-white/5">
           <div className="flex items-center gap-2">
-            <div className="w-10 h-10 bg-gradient-to-br from-[#6938ef] to-[#d534d8] rounded-lg flex items-center justify-center">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/>
-                <path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/>
-                <path d="M18 12a2 2 0 0 0 0 4h4v-4Z"/>
+            <div className="w-8 h-8 bg-gradient-to-br from-[#6938ef] to-[#d534d8] rounded-lg flex items-center justify-center">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M21 12V7H5a2 2 0 0 1 0-4h14v4" />
+                <path d="M3 5v14a2 2 0 0 0 2 2h16v-5" />
+                <path d="M18 12a2 2 0 0 0 0 4h4v-4Z" />
               </svg>
             </div>
             <div>
-              <span className="text-xl font-bold">Vested</span>
-              <span className="block text-xs text-[#6941C6]">Admin Panel</span>
+              <p className="font-bold text-sm">Vested Admin</p>
+              <p className="text-xs text-[#A5ACBA]">Super Administrator</p>
             </div>
           </div>
         </div>
 
-        {/* Navigation */}
-        <nav className="flex-1 px-3 py-4 space-y-1">
+        {/* Nav */}
+        <nav className="flex-1 p-4 space-y-1">
           {navItems.map((item) => {
             const Icon = item.icon;
             return (

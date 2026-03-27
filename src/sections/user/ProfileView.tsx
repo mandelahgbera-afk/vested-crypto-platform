@@ -1,8 +1,8 @@
 import { useState, useRef } from 'react';
 import type { User } from '@/types';
 import { useToast } from '@/contexts/ToastContext';
-import { mockApi } from '@/lib/mockData';
-import { supabase, updateUser } from '@/lib/supabase';
+
+import { supabase, updateUserProfile } from '@/lib/supabase';
 import { User as UserIcon, Mail, Wallet, Save, Camera } from 'lucide-react';
 
 interface ProfileViewProps {
@@ -62,7 +62,7 @@ export default function ProfileView({ user, onUpdate }: ProfileViewProps) {
       setAvatarUrl(newAvatarUrl);
 
       // Update user profile
-      await updateUser(user.id, { avatar_url: newAvatarUrl });
+      await updateUserProfile(user.id, { avatar_url: newAvatarUrl });
       showToast('Profile picture updated successfully!', 'success');
       onUpdate();
     } catch (error) {
@@ -80,7 +80,7 @@ export default function ProfileView({ user, onUpdate }: ProfileViewProps) {
     if (!user) return;
     
     try {
-      await mockApi.updateUser(user.id, {
+      await updateUserProfile(user.id, {
         full_name: formData.full_name,
         withdrawal_address: formData.withdrawal_address,
       });

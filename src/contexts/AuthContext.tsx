@@ -7,57 +7,39 @@ import { signIn, signOut, signUp, getCurrentUser, supabase, adminLogin as adminL
 // ============================================
 
 interface AuthContextType {
-  // User authentication
   user: User | null;
   isLoading: boolean;
   isAuthenticated: boolean;
-  
-  // Admin authentication
+
   admin: SuperAdmin | null;
   isAdminAuthenticated: boolean;
-  
-  // User actions
+
   login: (email: string, password: string) => Promise<boolean>;
-  signup: (email: string, password: string, fullName: string) => Promise<boolean>;
+  signup: (email: string, password: string, fullName: string) => Promise<{ success: boolean; needsConfirmation: boolean }>;
   logout: () => void;
   refreshUser: () => Promise<void>;
-  
-  // Admin actions
+
   adminLogin: (username: string, password: string) => Promise<boolean>;
   adminLogout: () => void;
   updateAdminCredentials: (currentPassword: string, newUsername?: string, newPassword?: string) => Promise<boolean>;
 }
 
-// ============================================
-// CREATE CONTEXT
-// ============================================
-
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-// ============================================
-// AUTH PROVIDER
-// ============================================
-
 export function AuthProvider({ children }: { children: ReactNode }) {
-  // User state
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  
-  // Admin state
   const [admin, setAdmin] = useState<SuperAdmin | null>(null);
 
   // ============================================
   // USER AUTHENTICATION
   // ============================================
-  
+
   const login = useCallback(async (email: string, password: string): Promise<boolean> => {
     setIsLoading(true);
     try {
       const result = await signIn(email, password);
-      if (!result) {
-        console.error('Login error: No response from signIn');
-        return false;
-      }
+      if (!result) return false;
       if (result.error) {
         console.error('Login error:', result.error);
         return false;
@@ -75,26 +57,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const signup = useCallback(async (email: string, password: string, fullName: string): Promise<boolean> => {
+  const signup = useCallback(async (
+    email: string,
+    password: string,
+    fullName: string
+  ): Promise<{ success: boolean; needsConfirmation: boolean }> => {
     setIsLoading(true);
     try {
       const result = await signUp(email, password, fullName);
-      if (!result) {
-        console.error('Signup error: No response from signUp');
-        return false;
-      }
+      if (!result) return { success: false, needsConfirmation: false };
       if (result.error) {
         console.error('Signup error:', result.error);
-        return false;
+        return { success: false, needsConfirmation: false };
+      }
+      if (result.needsConfirmation) {
+        return { success: true, needsConfirmation: true };
       }
       if (result.user) {
         setUser(result.user);
-        return true;
+        return { success: true, needsConfirmation: false };
       }
-      return false;
+      return { success: false, needsConfirmation: false };
     } catch (error) {
       console.error('Signup error:', error);
-      return false;
+      return { success: false, needsConfirmation: false };
     } finally {
       setIsLoading(false);
     }
@@ -119,29 +105,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   // ============================================
-  // ADMIN AUTHENTICATION (Separate from Supabase)
+  // ADMIN AUTHENTICATION
   // ============================================
-  // Admin authentication is handled separately via the super_admin table
-  
+
   const adminLogin = useCallback(async (username: string, password: string): Promise<boolean> => {
     setIsLoading(true);
     try {
       const result = await adminLoginFn(username, password);
-      
+
       if (result.error) {
         console.error('Admin login error:', result.error);
         return false;
       }
-      
       if (result.admin) {
-        setAdmin(result.admin);
-        // Store admin session in localStorage for persistence
-        if (typeof window !== 'undefined') {
-          window.localStorage.setItem('vested_admin_session', JSON.stringify(result.admin));
-        }
+        setAdmin(result.admin as SuperAdmin);
         return true;
       }
-      
       return false;
     } catch (error) {
       console.error('Admin login error:', error);
@@ -153,9 +132,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const adminLogout = useCallback(() => {
     setAdmin(null);
-    if (typeof window !== 'undefined') {
-      window.localStorage.removeItem('vested_admin_session');
-    }
   }, []);
 
   const updateAdminCredentials = useCallback(async (
@@ -163,18 +139,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     _newUsername?: string,
     newPassword?: string
   ): Promise<boolean> => {
+    if (!admin) return false;
     try {
-      if (!admin || !newPassword) {
-        return false;
+      if (newPassword) {
+        const result = await updateAdminPasswordFn(admin.id, currentPassword, newPassword);
+        if (result.error) {
+          console.error('Update admin credentials error:', result.error);
+          return false;
+        }
       }
-
-      const result = await updateAdminPasswordFn(admin.id, currentPassword, newPassword);
-      
-      if (result.error) {
-        console.error('Update admin password error:', result.error);
-        return false;
-      }
-
       return true;
     } catch (error) {
       console.error('Update admin credentials error:', error);
@@ -183,49 +156,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [admin]);
 
   // ============================================
-  // INITIALIZE AUTH STATE
+  // AUTH STATE LISTENER
   // ============================================
 
   useEffect(() => {
-    const initAuth = async () => {
-      setIsLoading(true);
-      try {
-        // Check for stored admin session
-        if (typeof window !== 'undefined') {
-          const storedAdmin = window.localStorage.getItem('vested_admin_session');
-          if (storedAdmin) {
-            try {
-              const adminData = JSON.parse(storedAdmin);
-              setAdmin(adminData);
-            } catch (error) {
-              console.error('Failed to restore admin session:', error);
-              window.localStorage.removeItem('vested_admin_session');
-            }
-          }
-        }
-
-        // Check for user session
-        const user = await getCurrentUser();
-        setUser(user);
-      } catch (error) {
-        console.error('Auth initialization error:', error);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    initAuth();
-
-    // Listen for user auth state changes
     const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
-        if (session?.user) {
-          const user = await getCurrentUser();
-          setUser(user);
+      if (event === 'SIGNED_IN' && session?.user) {
+        const userProfile = await getCurrentUser();
+        if (userProfile) {
+          setUser(userProfile);
         }
       } else if (event === 'SIGNED_OUT') {
         setUser(null);
       }
+    });
+
+    // Load initial user on mount
+    getCurrentUser().then((profile) => {
+      if (profile) setUser(profile);
     });
 
     return () => {
@@ -233,27 +181,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  // ============================================
-  // CONTEXT VALUE
-  // ============================================
-  
   const value: AuthContextType = {
-    // User
     user,
     isLoading,
     isAuthenticated: !!user,
-    
-    // Admin
     admin,
     isAdminAuthenticated: !!admin,
-    
-    // User actions
     login,
     signup,
     logout,
     refreshUser,
-    
-    // Admin actions
     adminLogin,
     adminLogout,
     updateAdminCredentials,
@@ -265,10 +202,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     </AuthContext.Provider>
   );
 }
-
-// ============================================
-// USE AUTH HOOK
-// ============================================
 
 export function useAuth() {
   const context = useContext(AuthContext);

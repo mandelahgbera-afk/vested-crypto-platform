@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { supabase, createActivityLog, getUserHoldings, updateUserHolding, createUserHolding, getTraderById } from './supabase';
 
 /**

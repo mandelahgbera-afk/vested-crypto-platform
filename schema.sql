@@ -1,15 +1,11 @@
 -- =============================================================================
--- VESTED CRYPTO TRADING PLATFORM - SUPABASE SCHEMA
+-- VESTED CRYPTO TRADING PLATFORM - SUPABASE SCHEMA (FIXED)
 -- =============================================================================
--- 
--- This schema creates all necessary tables, indexes, functions, and security
--- policies for the Vested crypto trading platform.
 --
 -- INSTRUCTIONS:
--- 1. Create a new Supabase project at https://supabase.com
--- 2. Go to the SQL Editor in your Supabase dashboard
--- 3. Copy and paste this entire file
--- 4. Click "Run" to execute
+-- 1. Go to your Supabase dashboard → SQL Editor
+-- 2. Copy and paste this entire file
+-- 3. Click "Run" to execute
 --
 -- =============================================================================
 
@@ -18,10 +14,8 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
 -- =============================================================================
--- SUPER ADMIN TABLE (Separate from regular users)
+-- SUPER ADMIN TABLE
 -- =============================================================================
--- This table stores the super administrator credentials
--- Only ONE super admin account should exist
 
 CREATE TABLE IF NOT EXISTS public.super_admin (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
@@ -33,10 +27,11 @@ CREATE TABLE IF NOT EXISTS public.super_admin (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Enable RLS on super_admin
 ALTER TABLE public.super_admin ENABLE ROW LEVEL SECURITY;
 
--- Only the super admin can view/update their own record
+DROP POLICY IF EXISTS "Super admin can view own record" ON public.super_admin;
+DROP POLICY IF EXISTS "Super admin can update own record" ON public.super_admin;
+
 CREATE POLICY "Super admin can view own record" ON public.super_admin
     FOR SELECT USING (true);
 
@@ -44,7 +39,7 @@ CREATE POLICY "Super admin can update own record" ON public.super_admin
     FOR UPDATE USING (true);
 
 -- =============================================================================
--- USERS TABLE (Regular users - extends Supabase Auth)
+-- USERS TABLE
 -- =============================================================================
 
 CREATE TABLE IF NOT EXISTS public.users (
@@ -61,21 +56,51 @@ CREATE TABLE IF NOT EXISTS public.users (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Enable RLS
 ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
 
--- RLS Policies for users
+DROP POLICY IF EXISTS "Users can view own profile" ON public.users;
+DROP POLICY IF EXISTS "Super admin can view all users" ON public.users;
+DROP POLICY IF EXISTS "Super admin can update all users" ON public.users;
+DROP POLICY IF EXISTS "Users can update own profile" ON public.users;
+DROP POLICY IF EXISTS "Users can insert own profile" ON public.users;
+
 CREATE POLICY "Users can view own profile" ON public.users
     FOR SELECT USING (auth.uid() = id);
 
-CREATE POLICY "Super admin can view all users" ON public.users
-    FOR SELECT USING (true);
-
-CREATE POLICY "Super admin can update all users" ON public.users
-    FOR UPDATE USING (true);
+CREATE POLICY "Users can insert own profile" ON public.users
+    FOR INSERT WITH CHECK (auth.uid() = id);
 
 CREATE POLICY "Users can update own profile" ON public.users
     FOR UPDATE USING (auth.uid() = id);
+
+-- =============================================================================
+-- AUTO-CREATE USER PROFILE TRIGGER
+-- =============================================================================
+
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER SET search_path = public
+AS $$
+BEGIN
+  INSERT INTO public.users (id, email, full_name, balance, profit_loss, status)
+  VALUES (
+    NEW.id,
+    NEW.email,
+    COALESCE(NEW.raw_user_meta_data->>'full_name', split_part(NEW.email, '@', 1)),
+    0,
+    0,
+    'active'
+  )
+  ON CONFLICT (id) DO NOTHING;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+CREATE TRIGGER on_auth_user_created
+  AFTER INSERT ON auth.users
+  FOR EACH ROW EXECUTE PROCEDURE public.handle_new_user();
 
 -- =============================================================================
 -- CRYPTOCURRENCIES TABLE
@@ -96,10 +121,11 @@ CREATE TABLE IF NOT EXISTS public.cryptos (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Enable RLS
 ALTER TABLE public.cryptos ENABLE ROW LEVEL SECURITY;
 
--- RLS Policies for cryptos
+DROP POLICY IF EXISTS "Anyone can view active cryptos" ON public.cryptos;
+DROP POLICY IF EXISTS "Super admin can manage cryptos" ON public.cryptos;
+
 CREATE POLICY "Anyone can view active cryptos" ON public.cryptos
     FOR SELECT USING (is_active = TRUE);
 
@@ -107,7 +133,7 @@ CREATE POLICY "Super admin can manage cryptos" ON public.cryptos
     FOR ALL USING (true);
 
 -- =============================================================================
--- TRADERS TABLE (Copy Traders)
+-- TRADERS TABLE
 -- =============================================================================
 
 CREATE TABLE IF NOT EXISTS public.traders (
@@ -115,7 +141,7 @@ CREATE TABLE IF NOT EXISTS public.traders (
     name TEXT NOT NULL,
     avatar_url TEXT,
     bio TEXT,
-    total_profit_loss NUMERIC(20, 2) DEFAULT 0,
+    total_profit_loss NUMERIC(20, 8) DEFAULT 0,
     profit_loss_percentage NUMERIC(10, 2) DEFAULT 0,
     followers_count INTEGER DEFAULT 0,
     performance_data JSONB DEFAULT '[]'::jsonb,
@@ -124,10 +150,11 @@ CREATE TABLE IF NOT EXISTS public.traders (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Enable RLS
 ALTER TABLE public.traders ENABLE ROW LEVEL SECURITY;
 
--- RLS Policies for traders
+DROP POLICY IF EXISTS "Anyone can view active traders" ON public.traders;
+DROP POLICY IF EXISTS "Super admin can manage traders" ON public.traders;
+
 CREATE POLICY "Anyone can view active traders" ON public.traders
     FOR SELECT USING (is_active = TRUE);
 
@@ -135,100 +162,112 @@ CREATE POLICY "Super admin can manage traders" ON public.traders
     FOR ALL USING (true);
 
 -- =============================================================================
--- USER_TRADERS TABLE (Junction - which traders users follow)
--- =============================================================================
-
-CREATE TABLE IF NOT EXISTS public.user_traders (
-    id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-    user_id UUID REFERENCES public.users(id) ON DELETE CASCADE,
-    trader_id UUID REFERENCES public.traders(id) ON DELETE CASCADE,
-    followed_at TIMESTAMPTZ DEFAULT NOW(),
-    UNIQUE(user_id, trader_id)
-);
-
--- Enable RLS
-ALTER TABLE public.user_traders ENABLE ROW LEVEL SECURITY;
-
--- RLS Policies for user_traders
-CREATE POLICY "Users can view own follows" ON public.user_traders
-    FOR SELECT USING (auth.uid() = user_id);
-
-CREATE POLICY "Users can manage own follows" ON public.user_traders
-    FOR ALL USING (auth.uid() = user_id);
-
--- =============================================================================
--- TRANSACTIONS TABLE (Deposits & Withdrawals)
+-- TRANSACTIONS TABLE
 -- =============================================================================
 
 CREATE TABLE IF NOT EXISTS public.transactions (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-    user_id UUID REFERENCES public.users(id) ON DELETE CASCADE,
+    user_id UUID REFERENCES public.users(id) ON DELETE CASCADE NOT NULL,
     type TEXT NOT NULL CHECK (type IN ('deposit', 'withdrawal')),
     amount NUMERIC(20, 8) NOT NULL,
     crypto_symbol TEXT,
     address TEXT,
     status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected')),
     notes TEXT,
-    approved_at TIMESTAMPTZ,
-    approved_by UUID REFERENCES public.super_admin(id) ON DELETE SET NULL,
+    proof_url TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Enable RLS
 ALTER TABLE public.transactions ENABLE ROW LEVEL SECURITY;
 
--- RLS Policies for transactions
+DROP POLICY IF EXISTS "Users can view own transactions" ON public.transactions;
+DROP POLICY IF EXISTS "Users can insert own transactions" ON public.transactions;
+DROP POLICY IF EXISTS "Super admin can manage transactions" ON public.transactions;
+
 CREATE POLICY "Users can view own transactions" ON public.transactions
     FOR SELECT USING (auth.uid() = user_id);
 
-CREATE POLICY "Users can create transactions" ON public.transactions
+CREATE POLICY "Users can insert own transactions" ON public.transactions
     FOR INSERT WITH CHECK (auth.uid() = user_id);
 
-CREATE POLICY "Super admin can view all transactions" ON public.transactions
-    FOR SELECT USING (true);
-
-CREATE POLICY "Super admin can update transactions" ON public.transactions
-    FOR UPDATE USING (true);
-
--- =============================================================================
--- ADMIN_SETTINGS TABLE (Platform configuration)
--- =============================================================================
-
-CREATE TABLE IF NOT EXISTS public.admin_settings (
-    id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-    key TEXT NOT NULL UNIQUE,
-    value TEXT NOT NULL,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW()
-);
-
--- Enable RLS
-ALTER TABLE public.admin_settings ENABLE ROW LEVEL SECURITY;
-
--- RLS Policies for admin_settings
-CREATE POLICY "Super admin can manage settings" ON public.admin_settings
+CREATE POLICY "Super admin can manage transactions" ON public.transactions
     FOR ALL USING (true);
 
-CREATE POLICY "Anyone can view settings" ON public.admin_settings
-    FOR SELECT USING (true);
+-- =============================================================================
+-- USER CRYPTOS TABLE
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS public.user_cryptos (
+    id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+    user_id UUID REFERENCES public.users(id) ON DELETE CASCADE NOT NULL,
+    crypto_id UUID REFERENCES public.cryptos(id) ON DELETE CASCADE NOT NULL,
+    balance NUMERIC(20, 8) DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(user_id, crypto_id)
+);
+
+ALTER TABLE public.user_cryptos ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Users can view own crypto holdings" ON public.user_cryptos;
+DROP POLICY IF EXISTS "Users can manage own crypto holdings" ON public.user_cryptos;
+DROP POLICY IF EXISTS "Super admin can manage user cryptos" ON public.user_cryptos;
+
+CREATE POLICY "Users can view own crypto holdings" ON public.user_cryptos
+    FOR SELECT USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can manage own crypto holdings" ON public.user_cryptos
+    FOR ALL USING (auth.uid() = user_id);
+
+CREATE POLICY "Super admin can manage user cryptos" ON public.user_cryptos
+    FOR ALL USING (true);
 
 -- =============================================================================
--- USER_CHART_DATA TABLE (Portfolio history for charts)
+-- USER TRADERS TABLE
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS public.user_traders (
+    id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+    user_id UUID REFERENCES public.users(id) ON DELETE CASCADE NOT NULL,
+    trader_id UUID REFERENCES public.traders(id) ON DELETE CASCADE NOT NULL,
+    followed_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(user_id, trader_id)
+);
+
+ALTER TABLE public.user_traders ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Users can view own trader subscriptions" ON public.user_traders;
+DROP POLICY IF EXISTS "Users can manage own trader subscriptions" ON public.user_traders;
+DROP POLICY IF EXISTS "Super admin can manage user traders" ON public.user_traders;
+
+CREATE POLICY "Users can view own trader subscriptions" ON public.user_traders
+    FOR SELECT USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can manage own trader subscriptions" ON public.user_traders
+    FOR ALL USING (auth.uid() = user_id);
+
+CREATE POLICY "Super admin can manage user traders" ON public.user_traders
+    FOR ALL USING (true);
+
+-- =============================================================================
+-- USER CHART DATA TABLE
 -- =============================================================================
 
 CREATE TABLE IF NOT EXISTS public.user_chart_data (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-    user_id UUID REFERENCES public.users(id) ON DELETE CASCADE,
+    user_id UUID REFERENCES public.users(id) ON DELETE CASCADE NOT NULL,
     date DATE NOT NULL,
-    value NUMERIC(20, 8) NOT NULL,
-    created_at TIMESTAMPTZ DEFAULT NOW()
+    value NUMERIC(20, 8) DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(user_id, date)
 );
 
--- Enable RLS
 ALTER TABLE public.user_chart_data ENABLE ROW LEVEL SECURITY;
 
--- RLS Policies for user_chart_data
+DROP POLICY IF EXISTS "Users can view own chart data" ON public.user_chart_data;
+DROP POLICY IF EXISTS "Super admin can manage chart data" ON public.user_chart_data;
+
 CREATE POLICY "Users can view own chart data" ON public.user_chart_data
     FOR SELECT USING (auth.uid() = user_id);
 
@@ -236,253 +275,186 @@ CREATE POLICY "Super admin can manage chart data" ON public.user_chart_data
     FOR ALL USING (true);
 
 -- =============================================================================
--- USER_CRYPTOS TABLE (User holdings)
+-- ACTIVITY TABLE
 -- =============================================================================
 
-CREATE TABLE IF NOT EXISTS public.user_cryptos (
+CREATE TABLE IF NOT EXISTS public.activity (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-    user_id UUID REFERENCES public.users(id) ON DELETE CASCADE,
-    crypto_id UUID REFERENCES public.cryptos(id) ON DELETE CASCADE,
-    balance NUMERIC(20, 8) DEFAULT 0,
-    staked_amount NUMERIC(20, 8) DEFAULT 0,
-    UNIQUE(user_id, crypto_id)
+    user_id UUID REFERENCES public.users(id) ON DELETE CASCADE NOT NULL,
+    type TEXT NOT NULL,
+    description TEXT NOT NULL,
+    amount NUMERIC(20, 8),
+    created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Enable RLS
-ALTER TABLE public.user_cryptos ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.activity ENABLE ROW LEVEL SECURITY;
 
--- RLS Policies for user_cryptos
-CREATE POLICY "Users can view own holdings" ON public.user_cryptos
+DROP POLICY IF EXISTS "Users can view own activity" ON public.activity;
+DROP POLICY IF EXISTS "Super admin can manage activity" ON public.activity;
+
+CREATE POLICY "Users can view own activity" ON public.activity
     FOR SELECT USING (auth.uid() = user_id);
 
-CREATE POLICY "Super admin can manage holdings" ON public.user_cryptos
+CREATE POLICY "Super admin can manage activity" ON public.activity
     FOR ALL USING (true);
 
 -- =============================================================================
--- ACTIVITY_LOGS TABLE (User activity tracking)
+-- ADMIN SETTINGS TABLE
 -- =============================================================================
 
-CREATE TABLE IF NOT EXISTS public.activity_logs (
+CREATE TABLE IF NOT EXISTS public.admin_settings (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-    user_id UUID REFERENCES public.users(id) ON DELETE CASCADE,
-    type TEXT NOT NULL CHECK (type IN ('receive', 'send', 'stake', 'unstake', 'trade')),
-    amount NUMERIC(20, 8) NOT NULL,
-    crypto_symbol TEXT NOT NULL,
-    usd_value NUMERIC(20, 2),
+    key TEXT NOT NULL UNIQUE,
+    value TEXT NOT NULL,
     description TEXT,
-    timestamp TIMESTAMPTZ DEFAULT NOW()
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Enable RLS
-ALTER TABLE public.activity_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.admin_settings ENABLE ROW LEVEL SECURITY;
 
--- RLS Policies for activity_logs
-CREATE POLICY "Users can view own activity" ON public.activity_logs
-    FOR SELECT USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Anyone can view settings" ON public.admin_settings;
+DROP POLICY IF EXISTS "Super admin can manage settings" ON public.admin_settings;
 
-CREATE POLICY "Super admin can manage activity" ON public.activity_logs
+CREATE POLICY "Anyone can view settings" ON public.admin_settings
+    FOR SELECT USING (true);
+
+CREATE POLICY "Super admin can manage settings" ON public.admin_settings
     FOR ALL USING (true);
 
 -- =============================================================================
--- EMAIL_TEMPLATES TABLE (For custom transactional emails)
+-- EMAIL TEMPLATES TABLE
 -- =============================================================================
 
 CREATE TABLE IF NOT EXISTS public.email_templates (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
     subject TEXT NOT NULL,
-    html_content TEXT,
+    html_content TEXT NOT NULL,
     text_content TEXT,
-    type TEXT DEFAULT 'transactional' CHECK (type IN ('transactional', 'marketing', 'notification')),
-    is_active BOOLEAN DEFAULT TRUE,
+    type TEXT DEFAULT 'transactional' CHECK (type IN ('transactional', 'marketing')),
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Enable RLS
 ALTER TABLE public.email_templates ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Super admin can manage email templates" ON public.email_templates;
 
 CREATE POLICY "Super admin can manage email templates" ON public.email_templates
     FOR ALL USING (true);
 
-CREATE POLICY "Anyone can view active templates" ON public.email_templates
-    FOR SELECT USING (is_active = TRUE);
-
 -- =============================================================================
--- EMAIL_LOGS TABLE (Track sent emails)
+-- EMAIL LOGS TABLE
 -- =============================================================================
 
 CREATE TABLE IF NOT EXISTS public.email_logs (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-    user_id UUID REFERENCES public.users(id) ON DELETE CASCADE,
-    template_id UUID REFERENCES public.email_templates(id) ON DELETE SET NULL,
-    to_email TEXT NOT NULL,
+    template_name TEXT,
+    recipient_email TEXT NOT NULL,
     subject TEXT NOT NULL,
-    status TEXT DEFAULT 'pending' CHECK (status IN ('sent', 'failed', 'pending')),
+    status TEXT DEFAULT 'sent' CHECK (status IN ('sent', 'failed', 'pending')),
     error_message TEXT,
-    sent_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ DEFAULT NOW()
+    sent_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Enable RLS
 ALTER TABLE public.email_logs ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Super admin can view email logs" ON public.email_logs
-    FOR SELECT USING (true);
+DROP POLICY IF EXISTS "Super admin can manage email logs" ON public.email_logs;
+
+CREATE POLICY "Super admin can manage email logs" ON public.email_logs
+    FOR ALL USING (true);
 
 -- =============================================================================
--- AUDIT_LOGS TABLE (Security audit trail)
+-- AUDIT LOGS TABLE
 -- =============================================================================
 
 CREATE TABLE IF NOT EXISTS public.audit_logs (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-    user_id UUID REFERENCES public.users(id) ON DELETE SET NULL,
-    admin_id UUID REFERENCES public.super_admin(id) ON DELETE SET NULL,
     action TEXT NOT NULL,
-    entity_type TEXT NOT NULL,
-    entity_id TEXT NOT NULL,
-    old_values JSONB,
-    new_values JSONB,
-    ip_address INET,
-    user_agent TEXT,
+    admin_id UUID,
+    user_id UUID,
+    entity_type TEXT,
+    entity_id TEXT,
+    old_data JSONB,
+    new_data JSONB,
+    ip_address TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Enable RLS
 ALTER TABLE public.audit_logs ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Super admin can view audit logs" ON public.audit_logs
-    FOR SELECT USING (true);
+DROP POLICY IF EXISTS "Super admin can manage audit logs" ON public.audit_logs;
 
-CREATE POLICY "Super admin can create audit logs" ON public.audit_logs
-    FOR INSERT WITH CHECK (true);
-
--- =============================================================================
--- FUNCTIONS & TRIGGERS
--- =============================================================================
-
--- Function to auto-update updated_at timestamp
-CREATE OR REPLACE FUNCTION update_updated_at_column()
-RETURNS TRIGGER AS $$
-BEGIN
-    NEW.updated_at = NOW();
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
--- Apply update trigger to all tables with updated_at
-CREATE TRIGGER update_super_admin_updated_at 
-    BEFORE UPDATE ON public.super_admin 
-    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-
-CREATE TRIGGER update_users_updated_at 
-    BEFORE UPDATE ON public.users 
-    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-
-CREATE TRIGGER update_cryptos_updated_at 
-    BEFORE UPDATE ON public.cryptos 
-    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-
-CREATE TRIGGER update_traders_updated_at 
-    BEFORE UPDATE ON public.traders 
-    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-
-CREATE TRIGGER update_transactions_updated_at 
-    BEFORE UPDATE ON public.transactions 
-    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-
-CREATE TRIGGER update_admin_settings_updated_at 
-    BEFORE UPDATE ON public.admin_settings 
-    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-
-CREATE TRIGGER update_email_templates_updated_at 
-    BEFORE UPDATE ON public.email_templates 
-    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-
--- Function to update user balance on transaction approval
-CREATE OR REPLACE FUNCTION update_user_balance_on_transaction()
-RETURNS TRIGGER AS $$
-BEGIN
-    IF NEW.status = 'approved' AND OLD.status IS DISTINCT FROM 'approved' THEN
-        IF NEW.type = 'deposit' THEN
-            UPDATE public.users SET balance = balance + NEW.amount WHERE id = NEW.user_id;
-        ELSIF NEW.type = 'withdrawal' THEN
-            UPDATE public.users SET balance = balance - NEW.amount WHERE id = NEW.user_id;
-        END IF;
-    END IF;
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-CREATE TRIGGER update_balance_on_transaction
-    AFTER UPDATE ON public.transactions
-    FOR EACH ROW
-    WHEN (OLD.status IS DISTINCT FROM NEW.status AND NEW.status = 'approved')
-    EXECUTE FUNCTION update_user_balance_on_transaction();
+CREATE POLICY "Super admin can manage audit logs" ON public.audit_logs
+    FOR ALL USING (true);
 
 -- =============================================================================
--- INDEXES (For performance)
+-- INDEXES
 -- =============================================================================
 
--- Users indexes
 CREATE INDEX IF NOT EXISTS idx_users_email ON public.users(email);
 CREATE INDEX IF NOT EXISTS idx_users_status ON public.users(status);
-
--- Cryptos indexes
-CREATE INDEX IF NOT EXISTS idx_cryptos_symbol ON public.cryptos(symbol);
-CREATE INDEX IF NOT EXISTS idx_cryptos_is_active ON public.cryptos(is_active);
-
--- Transactions indexes
 CREATE INDEX IF NOT EXISTS idx_transactions_user_id ON public.transactions(user_id);
 CREATE INDEX IF NOT EXISTS idx_transactions_status ON public.transactions(status);
-CREATE INDEX IF NOT EXISTS idx_transactions_type ON public.transactions(type);
 CREATE INDEX IF NOT EXISTS idx_transactions_created_at ON public.transactions(created_at DESC);
-
--- User traders indexes
+CREATE INDEX IF NOT EXISTS idx_user_cryptos_user_id ON public.user_cryptos(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_traders_user_id ON public.user_traders(user_id);
-CREATE INDEX IF NOT EXISTS idx_user_traders_trader_id ON public.user_traders(trader_id);
-
--- Chart data indexes
 CREATE INDEX IF NOT EXISTS idx_user_chart_data_user_id ON public.user_chart_data(user_id);
-CREATE INDEX IF NOT EXISTS idx_user_chart_data_date ON public.user_chart_data(date);
-
--- Activity logs indexes
-CREATE INDEX IF NOT EXISTS idx_activity_logs_user_id ON public.activity_logs(user_id);
-CREATE INDEX IF NOT EXISTS idx_activity_logs_timestamp ON public.activity_logs(timestamp DESC);
-
--- Audit logs indexes
+CREATE INDEX IF NOT EXISTS idx_activity_user_id ON public.activity(user_id);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON public.audit_logs(created_at DESC);
+
+-- =============================================================================
+-- UPDATED_AT TRIGGER FUNCTION
+-- =============================================================================
+
+CREATE OR REPLACE FUNCTION public.handle_updated_at()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS handle_updated_at ON public.users;
+CREATE TRIGGER handle_updated_at BEFORE UPDATE ON public.users
+    FOR EACH ROW EXECUTE PROCEDURE public.handle_updated_at();
+
+DROP TRIGGER IF EXISTS handle_updated_at ON public.cryptos;
+CREATE TRIGGER handle_updated_at BEFORE UPDATE ON public.cryptos
+    FOR EACH ROW EXECUTE PROCEDURE public.handle_updated_at();
+
+DROP TRIGGER IF EXISTS handle_updated_at ON public.traders;
+CREATE TRIGGER handle_updated_at BEFORE UPDATE ON public.traders
+    FOR EACH ROW EXECUTE PROCEDURE public.handle_updated_at();
+
+DROP TRIGGER IF EXISTS handle_updated_at ON public.transactions;
+CREATE TRIGGER handle_updated_at BEFORE UPDATE ON public.transactions
+    FOR EACH ROW EXECUTE PROCEDURE public.handle_updated_at();
+
+DROP TRIGGER IF EXISTS handle_updated_at ON public.admin_settings;
+CREATE TRIGGER handle_updated_at BEFORE UPDATE ON public.admin_settings
+    FOR EACH ROW EXECUTE PROCEDURE public.handle_updated_at();
+
+DROP TRIGGER IF EXISTS handle_updated_at ON public.super_admin;
+CREATE TRIGGER handle_updated_at BEFORE UPDATE ON public.super_admin
+    FOR EACH ROW EXECUTE PROCEDURE public.handle_updated_at();
 
 -- =============================================================================
 -- SEED DATA
 -- =============================================================================
 
--- Insert default super admin with SHA-256 hash for 'VestedAdmin2024!'
--- Hash computed as: '$sha256$' + SHA256('VestedAdmin2024!')
+-- Insert super admin (default credentials: admin / VestedAdmin2024!)
+-- Password hashed with SHA-256 + "$sha256$" prefix (matches frontend hashPassword function)
 INSERT INTO public.super_admin (username, password_hash, full_name)
 VALUES (
-    'admin', 
+    'admin',
     '$sha256$7728b96e020316fa5d235e3ed3d5b670ef7de1adec43da64b0175bbda92ed229',
     'Super Administrator'
 )
 ON CONFLICT (username) DO NOTHING;
-
--- Insert default admin settings
-INSERT INTO public.admin_settings (key, value) VALUES
-    ('platform_name', 'Vested'),
-    ('platform_description', 'The future of crypto investing'),
-    ('deposit_address_btc', 'bc1q2wrnatsqn06mtyycfkaqju6esagj9qf9ahnteh'),
-    ('deposit_address_eth', '0x573A5372003e44Eb2E0F02DC5E31442a551b4904'),
-    ('deposit_address_ltc', 'ltc1quyc8m29nwe0rrxr94d0t9968fdaevn0fzw94wd'),
-    ('withdrawal_fee_btc', '0.0005'),
-    ('withdrawal_fee_eth', '0.005'),
-    ('withdrawal_fee_ltc', '0.001'),
-    ('min_withdrawal_btc', '0.001'),
-    ('min_withdrawal_eth', '0.01'),
-    ('min_withdrawal_ltc', '0.1'),
-    ('support_email', 'support@vested.com'),
-    ('maintenance_mode', 'false')
-ON CONFLICT (key) DO NOTHING;
 
 -- Insert sample cryptocurrencies
 INSERT INTO public.cryptos (name, symbol, price, staking_apy, change_24h, market_cap, volume_24h) VALUES
@@ -499,15 +471,25 @@ ON CONFLICT (symbol) DO NOTHING;
 
 -- Insert sample traders
 INSERT INTO public.traders (name, bio, total_profit_loss, profit_loss_percentage, followers_count, performance_data) VALUES
-    ('Alex Thompson', 'Professional crypto trader with 8+ years experience. Specializing in BTC and ETH strategies.', 245000, 145, 1247, '[{"date": "2024-02-20", "value": 100}, {"date": "2024-02-21", "value": 102}, {"date": "2024-02-22", "value": 105}]'),
-    ('Maria Garcia', 'DeFi specialist focusing on yield farming and staking strategies.', 189000, 98, 892, '[{"date": "2024-02-20", "value": 100}, {"date": "2024-02-21", "value": 101}, {"date": "2024-02-22", "value": 103}]'),
-    ('David Kim', 'Altcoin trader with expertise in emerging blockchain projects.', 156000, 87, 654, '[{"date": "2024-02-20", "value": 100}, {"date": "2024-02-21", "value": 100.5}, {"date": "2024-02-22", "value": 102}]'),
-    ('Sarah Johnson', 'Long-term holder and portfolio strategist. Risk-adjusted returns focus.', 278000, 156, 1589, '[{"date": "2024-02-20", "value": 100}, {"date": "2024-02-21", "value": 103}, {"date": "2024-02-22", "value": 108}]')
+    ('Alex Thompson', 'Professional crypto trader with 8+ years experience. Specializing in BTC and ETH strategies.', 245000, 145, 1247, '[{"date": "2024-02-20", "value": 100}, {"date": "2024-02-21", "value": 102}, {"date": "2024-02-22", "value": 105}, {"date": "2024-02-23", "value": 108}, {"date": "2024-02-24", "value": 112}]'),
+    ('Maria Garcia', 'DeFi specialist focusing on yield farming and staking strategies.', 189000, 98, 892, '[{"date": "2024-02-20", "value": 100}, {"date": "2024-02-21", "value": 101}, {"date": "2024-02-22", "value": 103}, {"date": "2024-02-23", "value": 105}, {"date": "2024-02-24", "value": 107}]'),
+    ('David Kim', 'Altcoin trader with expertise in emerging blockchain projects.', 156000, 87, 654, '[{"date": "2024-02-20", "value": 100}, {"date": "2024-02-21", "value": 100.5}, {"date": "2024-02-22", "value": 102}, {"date": "2024-02-23", "value": 104}, {"date": "2024-02-24", "value": 106}]'),
+    ('Sarah Johnson', 'Long-term holder and portfolio strategist. Risk-adjusted returns focus.', 278000, 156, 1589, '[{"date": "2024-02-20", "value": 100}, {"date": "2024-02-21", "value": 103}, {"date": "2024-02-22", "value": 108}, {"date": "2024-02-23", "value": 114}, {"date": "2024-02-24", "value": 120}]')
 ON CONFLICT DO NOTHING;
+
+-- Insert default platform settings
+INSERT INTO public.admin_settings (key, value, description) VALUES
+    ('platform_name', 'Vested', 'Platform display name'),
+    ('min_deposit', '10', 'Minimum deposit amount in USD'),
+    ('max_withdrawal', '50000', 'Maximum withdrawal amount in USD'),
+    ('withdrawal_fee', '0.5', 'Withdrawal fee percentage'),
+    ('support_email', 'support@vested.com', 'Support email address'),
+    ('maintenance_mode', 'false', 'Enable/disable maintenance mode')
+ON CONFLICT (key) DO NOTHING;
 
 -- Insert sample email templates
 INSERT INTO public.email_templates (name, subject, html_content, text_content, type) VALUES
-    ('deposit_approved', 'Your Deposit Has Been Approved', 
+    ('deposit_approved', 'Your Deposit Has Been Approved',
      '<h2>Deposit Approved</h2><p>Your deposit of {{amount}} {{crypto}} has been approved and added to your account.</p>',
      'Your deposit of {{amount}} {{crypto}} has been approved and added to your account.',
      'transactional'),
@@ -529,10 +511,10 @@ ON CONFLICT (name) DO NOTHING;
 -- GRANT PERMISSIONS
 -- =============================================================================
 
--- Grant usage to anon role
 GRANT USAGE ON SCHEMA public TO anon;
 GRANT USAGE ON SCHEMA public TO authenticated;
 
--- Grant table permissions (RLS will handle row-level access)
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO authenticated;
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO anon;
+GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO authenticated;
+GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO anon;

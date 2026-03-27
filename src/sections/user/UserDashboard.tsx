@@ -29,7 +29,7 @@ export default function UserDashboard({ currentPage, onNavigate }: UserDashboard
   const { transactions, isLoading: txLoading, refetch: refetchTransactions } = useTransactions();
   const { activities, isLoading: actLoading } = useActivity();
   const { chartData, isLoading: portLoading } = usePortfolio();
-  const { traders: userTradersData, refetch: refetchTraders } = useFollowedTraders();
+  const { followedTraders: userTradersData, refetch: refetchTraders } = useFollowedTraders();
   
   // State for static data
   const [cryptos, setCryptos] = useState<Crypto[]>([]);
@@ -45,7 +45,7 @@ export default function UserDashboard({ currentPage, onNavigate }: UserDashboard
 
   // Update user traders set when data loads
   useEffect(() => {
-    setUserTradersSet(new Set(userTradersData.map(ut => ut.trader_id)));
+    setUserTradersSet(new Set(userTradersData.map((ut: { trader_id: string }) => ut.trader_id)));
   }, [userTradersData]);
 
   const loadStaticData = async () => {
@@ -93,7 +93,6 @@ export default function UserDashboard({ currentPage, onNavigate }: UserDashboard
       await createTransaction({
         user_id: user.id,
         type,
-        status: 'pending',
         amount: data.amount || 0,
         crypto_symbol: data.crypto_symbol,
         address: data.address,

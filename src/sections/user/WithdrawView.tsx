@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import type { Crypto, User } from '@/types';
 import { AlertTriangle } from 'lucide-react';
 import { useToast } from '@/contexts/ToastContext';
-import { getUserHoldings } from '@/lib/supabase';
+import { getUserCryptos } from '@/lib/supabase';
 
 interface WithdrawViewProps {
   user: User | null;
@@ -76,7 +76,7 @@ export default function WithdrawView({ user, cryptos, onSubmit }: WithdrawViewPr
       }
 
       try {
-        const holdings = await getUserHoldings(user.id);
+        const holdings = await getUserCryptos(user.id);
         const balances: Record<string, number> = {};
         
         holdings.forEach((holding) => {

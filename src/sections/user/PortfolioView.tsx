@@ -266,15 +266,15 @@ export default function PortfolioView({ user, cryptos, chartData, activities, on
                   <div className="flex-1">
                     <p className="font-medium capitalize">{activity.type}</p>
                     <p className="text-xs text-[#A5ACBA]">
-                      {new Date(activity.timestamp).toLocaleDateString()}
+                      {new Date(activity.created_at).toLocaleDateString()}
                     </p>
                   </div>
                   <div className="text-right">
                     <p className="font-medium">
-                      {activity.amount} {activity.crypto_symbol}
+                      {activity.amount}
                     </p>
                     <p className="text-xs text-[#A5ACBA]">
-                      ${(activity.usd_value ?? 0).toLocaleString()}
+                      {activity.description}
                     </p>
                   </div>
                 </div>

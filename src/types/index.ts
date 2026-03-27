@@ -100,8 +100,7 @@ export interface Transaction {
   address?: string;
   status: 'pending' | 'approved' | 'rejected';
   notes?: string;
-  approved_at?: string;
-  approved_by?: string;
+  proof_url?: string;
   created_at: string;
   updated_at: string;
   user?: User;
@@ -115,6 +114,7 @@ export interface AdminSetting {
   id: string;
   key: string;
   value: string;
+  description?: string;
   created_at: string;
   updated_at: string;
 }
@@ -136,7 +136,6 @@ export interface UserCrypto {
   user_id: string;
   crypto_id: string;
   balance: number;
-  staked_amount: number;
   crypto?: Crypto;
 }
 
@@ -148,21 +147,20 @@ export interface PortfolioData {
 export interface ActivityItem {
   id: string;
   user_id?: string;
-  type: 'receive' | 'send' | 'stake' | 'unstake' | 'trade';
-  amount: number;
-  crypto_symbol: string;
-  usd_value?: number;
-  timestamp: string;
-  description?: string;
+  type: string;
+  description: string;
+  amount?: number;
+  created_at: string;
 }
 
 export interface DashboardStats {
   totalUsers: number;
+  activeUsers: number;
   totalBalance: number;
-  totalTransactions: number;
-  pendingRequests: number;
+  pendingDeposits: number;
+  pendingWithdrawals: number;
+  totalVolume: number;
   activeTraders: number;
-  listedCryptos: number;
 }
 
 export interface MarketOverview {
@@ -180,20 +178,21 @@ export interface EmailTemplate {
   id: string;
   name: string;
   subject: string;
-  body: string;
-  variables: string[];
-  is_active: boolean;
+  html_content: string;
+  text_content?: string;
+  type: 'transactional' | 'marketing';
+  created_at: string;
+  updated_at: string;
 }
 
 export interface EmailLog {
   id: string;
-  user_id: string;
-  template_id: string;
-  to_email: string;
+  template_name?: string;
+  recipient_email: string;
   subject: string;
   status: 'sent' | 'failed' | 'pending';
-  sent_at?: string;
   error_message?: string;
+  sent_at: string;
 }
 
 // ============================================
@@ -201,15 +200,14 @@ export interface EmailLog {
 // ============================================
 
 export interface AuditLog {
-  id: string;
+  id?: string;
   user_id?: string;
   admin_id?: string;
   action: string;
   entity_type: string;
   entity_id: string;
-  old_values?: Record<string, unknown>;
-  new_values?: Record<string, unknown>;
+  old_data?: Record<string, unknown>;
+  new_data?: Record<string, unknown>;
   ip_address?: string;
-  user_agent?: string;
-  created_at: string;
+  created_at?: string;
 }

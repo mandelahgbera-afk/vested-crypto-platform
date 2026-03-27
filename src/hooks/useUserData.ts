@@ -2,11 +2,11 @@ import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   getUserById,
-  getTransactionsByUserId,
-  getUserHoldings,
+  getUserTransactions,
+  getUserCryptos,
   getUserChartData,
-  getActivityLogs,
-  getUserFollowedTraders,
+  getUserActivity,
+  getUserTraders,
 } from '@/lib/supabase';
 import type {
   User,
@@ -44,7 +44,7 @@ export function useTransactions(): UseTransactionsReturn {
     setIsLoading(true);
     setError(null);
     try {
-      const data = await getTransactionsByUserId(user.id);
+      const data = await getUserTransactions(user.id);
       setTransactions(data);
     } catch (err) {
       console.error('[useTransactions] Error:', err);
@@ -98,7 +98,7 @@ export function usePortfolio(): UsePortfolioReturn {
     setError(null);
     try {
       const [holdingsData, chartDataResult] = await Promise.all([
-        getUserHoldings(user.id),
+        getUserCryptos(user.id),
         getUserChartData(user.id),
       ]);
 
@@ -116,7 +116,6 @@ export function usePortfolio(): UsePortfolioReturn {
     fetchPortfolioData();
   }, [fetchPortfolioData]);
 
-  // Calculate total value from holdings
   const totalValue = holdings.reduce((sum, holding) => {
     if (holding.crypto) {
       return sum + holding.balance * holding.crypto.price;
@@ -161,7 +160,7 @@ export function useActivity(): UseActivityReturn {
     setIsLoading(true);
     setError(null);
     try {
-      const data = await getActivityLogs(user.id);
+      const data = await getUserActivity(user.id);
       setActivities(data);
     } catch (err) {
       console.error('[useActivity] Error:', err);
@@ -188,7 +187,7 @@ export function useActivity(): UseActivityReturn {
 // ============================================
 
 interface UseFollowedTradersReturn {
-  traders: UserTrader[];
+  followedTraders: UserTrader[];
   isLoading: boolean;
   error: unknown;
   refetch: () => Promise<void>;
@@ -196,13 +195,13 @@ interface UseFollowedTradersReturn {
 
 export function useFollowedTraders(): UseFollowedTradersReturn {
   const { user } = useAuth();
-  const [traders, setTraders] = useState<UserTrader[]>([]);
+  const [followedTraders, setFollowedTraders] = useState<UserTrader[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<unknown>(null);
 
-  const fetchTraders = useCallback(async () => {
+  const fetchFollowedTraders = useCallback(async () => {
     if (!user) {
-      setTraders([]);
+      setFollowedTraders([]);
       setIsLoading(false);
       return;
     }
@@ -210,8 +209,8 @@ export function useFollowedTraders(): UseFollowedTradersReturn {
     setIsLoading(true);
     setError(null);
     try {
-      const data = await getUserFollowedTraders(user.id);
-      setTraders(data);
+      const data = await getUserTraders(user.id);
+      setFollowedTraders(data);
     } catch (err) {
       console.error('[useFollowedTraders] Error:', err);
       setError(err);
@@ -221,14 +220,14 @@ export function useFollowedTraders(): UseFollowedTradersReturn {
   }, [user]);
 
   useEffect(() => {
-    fetchTraders();
-  }, [fetchTraders]);
+    fetchFollowedTraders();
+  }, [fetchFollowedTraders]);
 
   return {
-    traders,
+    followedTraders,
     isLoading,
     error,
-    refetch: fetchTraders,
+    refetch: fetchFollowedTraders,
   };
 }
 

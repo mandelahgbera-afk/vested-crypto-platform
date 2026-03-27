@@ -468,36 +468,28 @@ export const mockActivityItems: ActivityItem[] = [
     id: '1',
     type: 'receive',
     amount: 0.1,
-    crypto_symbol: 'BTC',
-    usd_value: 6423,
-    timestamp: '2024-03-20T14:00:00Z',
+    created_at: '2024-03-20T14:00:00Z',
     description: 'Received from external wallet',
   },
   {
     id: '2',
     type: 'stake',
     amount: 2,
-    crypto_symbol: 'ETH',
-    usd_value: 6900,
-    timestamp: '2024-03-20T11:00:00Z',
+    created_at: '2024-03-20T11:00:00Z',
     description: 'Staked for 5.2% APY',
   },
   {
     id: '3',
     type: 'send',
     amount: 1000,
-    crypto_symbol: 'USDT',
-    usd_value: 1000,
-    timestamp: '2024-03-19T16:00:00Z',
+    created_at: '2024-03-19T16:00:00Z',
     description: 'Withdrawal to bank',
   },
   {
     id: '4',
     type: 'receive',
     amount: 500,
-    crypto_symbol: 'ADA',
-    usd_value: 225,
-    timestamp: '2024-03-18T09:00:00Z',
+    created_at: '2024-03-18T09:00:00Z',
     description: 'Staking rewards',
   },
 ];
@@ -549,11 +541,12 @@ function generateUserChartData(userId: string): UserChartData[] {
 // Dashboard Stats
 export const getDashboardStats = (): DashboardStats => ({
   totalUsers: mockUsers.filter(u => !u.is_admin).length,
+  activeUsers: mockUsers.filter(u => !u.is_admin).length,
   totalBalance: mockUsers.reduce((acc, u) => acc + u.balance, 0),
-  totalTransactions: mockTransactions.length,
-  pendingRequests: mockTransactions.filter(t => t.status === 'pending').length,
+  pendingDeposits: mockTransactions.filter(t => t.status === 'pending' && t.type === 'deposit').length,
+  pendingWithdrawals: mockTransactions.filter(t => t.status === 'pending' && t.type === 'withdrawal').length,
+  totalVolume: mockTransactions.reduce((acc, t) => acc + t.amount, 0),
   activeTraders: mockTraders.filter(t => t.is_active).length,
-  listedCryptos: mockCryptos.filter(c => c.is_active).length,
 });
 
 // Market Overview
